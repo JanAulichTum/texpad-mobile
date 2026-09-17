@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0065bd">
+<title>texpad mobile</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --bg:#ffffff; --panel:#f6f7f8; --line:#dfe3e6; --ink:#15181c;
+    --muted:#6b7280; --accent:#0065bd; --bad:#b42318; --good:#067647;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14171a; --panel:#1b1f23; --line:#2b3138; --ink:#e6e9ec;
+           --muted:#9aa4af; --accent:#4d9de0; }
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overscroll-behavior:none}
+  body{font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       color:var(--ink);background:var(--bg);display:flex;flex-direction:column;
+       padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  header{display:flex;align-items:center;gap:8px;padding:10px 12px;
+         border-bottom:1px solid var(--line);background:var(--panel);flex:0 0 auto}
+  header b{font-weight:600;font-size:15px;white-space:nowrap}
+  .pill{font-size:11px;padding:3px 8px;border-radius:99px;border:1px solid var(--line);
+        color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pill.ok{color:var(--good);border-color:var(--good)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  .pill.work{color:var(--accent);border-color:var(--accent)}
+  button{font:inherit;padding:9px 14px;border-radius:9px;border:1px solid var(--line);
+         background:var(--bg);color:var(--ink);cursor:pointer;touch-action:manipulation}
+  button:active{opacity:.7}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+  button:disabled{opacity:.45}
+  button.icon{padding:8px 10px;font-size:16px;line-height:1}
+  nav{display:flex;border-bottom:1px solid var(--line);flex:0 0 auto;background:var(--panel)}
+  nav button{flex:1;border:0;border-radius:0;background:transparent;padding:11px 4px;
+             font-weight:600;color:var(--muted);border-bottom:2px solid transparent}
+  nav button.active{color:var(--accent);border-bottom-color:var(--accent)}
+  main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;position:relative}
+  .view{flex:1 1 auto;min-height:0;display:none;flex-direction:column}
+  .view.active{display:flex}
+
+  /* ---- files view ---- */
+  #files{flex:1 1 auto;overflow:auto;-webkit-overflow-scrolling:touch}
+  .filerow{display:flex;align-items:center;justify-content:space-between;padding:14px 14px;
+           border-bottom:1px solid var(--line)}
+  .filerow .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+  .filerow .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;margin-left:8px}
+  .empty{padding:30px 16px;color:var(--muted);text-align:center}
+
+  /* ---- editor view ---- */
+  #edbar{display:flex;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);
+         overflow-x:auto;white-space:nowrap;flex:0 0 auto}
+  #edbar .fname{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+                color:var(--muted);flex:1 1 auto;overflow:hidden;text-overflow:ellipsis}
+  #ed{flex:1 1 auto;border:0;outline:0;resize:none;padding:12px 14px;background:var(--bg);
+      color:var(--ink);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+      tab-size:2;-webkit-text-size-adjust:100%}
+
+  /* ---- pdf view ---- */
+  #pdfwrap{flex:1 1 auto;display:flex;align-items:center;justify-content:center;
+           color:var(--muted);background:var(--panel)}
+  #pdfframe{width:100%;height:100%;border:0;display:none;background:#fff}
+
+  /* ---- settings modal ---- */
+  #settings{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;
+            align-items:flex-end;justify-content:center;z-index:10}
+  #settings.open{display:flex}
+  #settingsCard{background:var(--bg);width:100%;max-width:480px;border-radius:16px 16px 0 0;
+                padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+                max-height:88vh;overflow:auto}
+  #settingsCard h2{margin:0 0 4px;font-size:17px}
+  #settingsCard p.hint{color:var(--muted);font-size:12.5px;margin:2px 0 14px}
+  label.field{display:block;margin-bottom:12px}
+  label.field span{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  label.field input{width:100%;font:15px/1.3 -apple-system,sans-serif;padding:10px 11px;
+                     border-radius:9px;border:1px solid var(--line);background:var(--panel);
+                     color:var(--ink)}
+  .row{display:flex;gap:8px}
+  .row > label{flex:1}
+
+  #status{padding:7px 12px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);
+          flex:0 0 auto;min-height:1.4em;white-space:pre-wrap;word-break:break-word}
+  #status.bad{color:var(--bad)}
+  #status.ok{color:var(--good)}
+</style>
+</head>
+<body>
+
+<header>
+  <button class="icon" id="gearBtn" title="Settings">&#9881;&#65039;</button>
+  <b>texpad mobile</b>
+  <span style="flex:1"></span>
+  <span class="pill" id="repoPill">not configured</span>
+</header>
+
+<nav>
+  <button class="tab active" data-view="files">Files</button>
+  <button class="tab" data-view="editor">Editor</button>
+  <button class="tab" data-view="pdf">PDF</button>
+</nav>
+
+<main>
+
+  <div class="view active" id="view-files">
+    <div id="files"><div class="empty">Tap &#9881;&#65039; to set up your repo.</div></div>
+  </div>
+
+  <div class="view" id="view-editor">
+    <div id="edbar">
+      <span class="fname" id="fname">no file open</span>
+      <button id="pushBtn" disabled>Push</button>
+      <button class="primary" id="compileBtn" disabled>Compile</button>
+    </div>
+    <textarea id="ed" spellcheck="false" placeholder="Open a file from the Files tab…"></textarea>
+  </div>
+
+  <div class="view" id="view-pdf">
+    <div id="pdfwrap">
+      <span id="pdfHint">No PDF yet — tap Compile.</span>
+      <iframe id="pdfframe"></iframe>
+    </div>
+  </div>
+
+</main>
+
+<div id="status"></div>
+
+<div id="settings">
+  <div id="settingsCard">
+    <h2>Repository</h2>
+    <p class="hint">A GitHub personal access token, scoped to just this repo, with
+      <b>Contents: Read and write</b> and <b>Actions: Read and write</b> permissions
+      (create one at github.com &rarr; Settings &rarr; Developer settings &rarr;
+      Fine-grained tokens). It's stored only on this device, in this browser.</p>
+    <label class="field"><span>Personal access token</span>
+      <input id="cfgToken" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="github_pat_…"></label>
+    <div class="row">
+      <label class="field"><span>Owner</span>
+        <input id="cfgOwner" autocapitalize="off" autocorrect="off" placeholder="JanAulichTum"></label>
+      <label class="field"><span>Repo</span>
+        <input id="cfgRepo" autocapitalize="off" autocorrect="off" placeholder="master-thesis"></label>
+    </div>
+    <label class="field"><span>Branch</span>
+      <input id="cfgBranch" autocapitalize="off" autocorrect="off" placeholder="master"></label>
+    <div class="row" style="margin-top:6px">
+      <button id="cfgCancel" style="flex:1">Cancel</button>
+      <button class="primary" id="cfgSave" style="flex:1">Save &amp; connect</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const API = "https://api.github.com";
+
+// ---------------------------------------------------------------- utf8/base64
+function utf8ToB64(str){
+  const bytes = new TextEncoder().encode(str);
+  let binary = ""; const chunk = 0x8000;
+  for(let i=0; i<bytes.length; i+=chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i+chunk));
+  return btoa(binary);
+}
+function b64ToUtf8(b64){
+  const binary = atob(b64.replace(/\n/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+// ---------------------------------------------------------------- config
+let cfg = {};
+function loadCfg(){
+  try{ cfg = JSON.parse(localStorage.getItem("texpadMobileConfig") || "{}"); }catch(e){ cfg = {}; }
+}
+function saveCfg(){ localStorage.setItem("texpadMobileConfig", JSON.stringify(cfg)); }
+function configured(){ return !!(cfg.token && cfg.owner && cfg.repo && cfg.branch); }
+
+function setStatus(text, cls){
+  const s = $("#status"); s.textContent = text || ""; s.className = cls || "";
+}
+
+// ---------------------------------------------------------------- GitHub API
+async function gh(path, opts){
+  opts = opts || {};
+  const headers = Object.assign({
+    "Authorization": "Bearer " + cfg.token,
+    "Accept": "application/vnd.github+json",
+  }, opts.headers || {});
+  const res = await fetch(API + path, Object.assign({}, opts, {headers}));
+  return res;
+}
+
+async function ghJson(path, opts){
+  const res = await gh(path, opts);
+  if(!res.ok){
+    let msg = res.status + " " + res.statusText;
+    try{ const j = await res.json(); if(j.message) msg += ": " + j.message; }catch(e){}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------- files list
+let fileList = [];
+async function refreshFiles(){
+  if(!configured()) return;
+  setStatus("Loading file list…", "work");
+  try{
+    const tree = await ghJson(`/repos/${cfg.owner}/${cfg.repo}/git/trees/${encodeURIComponent(cfg.branch)}?recursive=1`);
+    fileList = tree.tree
+      .filter(e => e.type === "blob" && /\.(tex|bib|sty|cls)$/i.test(e.path))
+      .filter(e => !e.path.startsWith("build/"))
+      .map(e => e.path)
+      .sort((a,b) => (a !== "main.tex") - (b !== "main.tex") || a.localeCompare(b));
+    renderFiles();
+    $("#repoPill").textContent = cfg.owner + "/" + cfg.repo;
+    $("#repoPill").className = "pill ok";
+    setStatus("");
+  }catch(err){
+    setStatus("Couldn't load files: " + err.message, "bad");
+    $("#repoPill").className = "pill bad";
+  }
+}
+
+function renderFiles(){
+  const box = $("#files");
+  if(!fileList.length){ box.innerHTML = "<div class='empty'>No .tex files found.</div>"; return; }
+  box.innerHTML = "";
+  fileList.forEach(path=>{
+    const row = document.createElement("div");
+    row.className = "filerow";
+    const dotColor = markColor[path] || "transparent";
+    row.innerHTML = `<span class="path"></span><span class="dot" style="background:${dotColor};border:1px solid var(--line)"></span>`;
+    row.querySelector(".path").textContent = path;
+    row.addEventListener("click", ()=>openFile(path));
+    box.appendChild(row);
+  });
+}
+
+// per-file "still has unpushed local edits" indicator (kept in memory only)
+let markColor = {};
+
+// ---------------------------------------------------------------- editor
+let curPath = null, curSha = null, dirty = false;
+
+async function openFile(path){
+  setStatus("Opening " + path + "…", "work");
+  try{
+    const data = await ghJson(`/repos/${cfg.owner}/${cfg.repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.branch)}`);
+    curPath = path; curSha = data.sha; dirty = false;
+    $("#ed").value = b64ToUtf8(data.content);
+    $("#fname").textContent = path;
+    $("#pushBtn").disabled = false;
+    $("#compileBtn").disabled = false;
+    delete markColor[path]; renderFiles();
+    switchView("editor");
+    setStatus("");
+  }catch(err){
+    setStatus("Couldn't open file: " + err.message, "bad");
+  }
+}
+
+$("#ed").addEventListener("input", ()=>{
+  dirty = true;
+  if(curPath){ markColor[curPath] = "#ffd600"; }
+});
+
+async function pushFile(){
+  if(!curPath) return;
+  setStatus("Pushing " + curPath + "…", "work");
+  $("#pushBtn").disabled = true;
+  try{
+    const body = {
+      message: "Edit " + curPath + " (texpad mobile)",
+      content: utf8ToB64($("#ed").value),
+      sha: curSha,
+      branch: cfg.branch,
+    };
+    const res = await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/${encodeURIComponent(curPath)}`,
+                          {method:"PUT", body: JSON.stringify(body)});
+    if(res.status === 409){
+      throw new Error("This file changed on GitHub since you opened it. Re-open it, then re-apply your edit.");
+    }
+    if(!res.ok){
+      const j = await res.json().catch(()=>({}));
+      throw new Error(j.message || (res.status + " " + res.statusText));
+    }
+    const j = await res.json();
+    curSha = j.content.sha; dirty = false;
+    delete markColor[curPath]; renderFiles();
+    setStatus("Pushed " + curPath + " ✓", "ok");
+  }catch(err){
+    setStatus("Push failed: " + err.message, "bad");
+  }finally{
+    $("#pushBtn").disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------- compile
+async function compile(){
+  if(dirty){
+    setStatus("Pushing your edit first…", "work");
+    await pushFile();
+  }
+  $("#compileBtn").disabled = true;
+  const dispatchedAt = Date.now() - 5000;   // small buffer for clock skew
+  try{
+    setStatus("Starting compile…", "work");
+    const res = await gh(`/repos/${cfg.owner}/${cfg.repo}/actions/workflows/compile.yml/dispatches`,
+                          {method:"POST", body: JSON.stringify({ref: cfg.branch})});
+    if(!res.ok) throw new Error("Couldn't start the workflow (" + res.status + "). Does compile.yml exist on this branch?");
+
+    // find the run this dispatch created
+    let run = null;
+    for(let i=0; i<10 && !run; i++){
+      await sleep(1500);
+      const runs = await ghJson(`/repos/${cfg.owner}/${cfg.repo}/actions/runs?event=workflow_dispatch&per_page=5`);
+      run = runs.workflow_runs.find(r => new Date(r.created_at).getTime() >= dispatchedAt);
+    }
+    if(!run) throw new Error("Compile started, but I couldn't find the run — check the Actions tab on GitHub.");
+
+    setStatus("Compiling on GitHub… (usually ~1-2 min)", "work");
+    while(true){
+      await sleep(3000);
+      run = await ghJson(`/repos/${cfg.owner}/${cfg.repo}/actions/runs/${run.id}`);
+      if(run.status === "completed") break;
+      setStatus("Compiling on GitHub… (" + run.status + ")", "work");
+    }
+    if(run.conclusion !== "success"){
+      setStatus("Compile failed (" + run.conclusion + "). Open in GitHub for the log.", "bad");
+      window.__lastRunUrl = run.html_url;
+      return;
+    }
+
+    setStatus("Fetching PDF…", "work");
+    await showLatestPdf();
+    setStatus("Compiled ✓", "ok");
+    switchView("pdf");
+  }catch(err){
+    setStatus("Compile error: " + err.message, "bad");
+  }finally{
+    $("#compileBtn").disabled = false;
+  }
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+async function showLatestPdf(){
+  const rel = await ghJson(`/repos/${cfg.owner}/${cfg.repo}/releases/tags/latest`);
+  const asset = (rel.assets || []).find(a => a.name.endsWith(".pdf"));
+  if(!asset) throw new Error("No PDF asset on the 'latest' release yet.");
+  const res = await gh(`/repos/${cfg.owner}/${cfg.repo}/releases/assets/${asset.id}`,
+                        {headers: {"Accept": "application/octet-stream"}});
+  if(!res.ok) throw new Error("Couldn't download the PDF (" + res.status + ")");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const frame = $("#pdfframe");
+  frame.src = url;
+  frame.style.display = "block";
+  $("#pdfHint").style.display = "none";
+}
+
+// ---------------------------------------------------------------- tabs
+function switchView(name){
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
+  document.querySelectorAll("nav .tab").forEach(b => b.classList.toggle("active", b.dataset.view === name));
+}
+document.querySelectorAll("nav .tab").forEach(b => b.addEventListener("click", ()=>switchView(b.dataset.view)));
+
+// ---------------------------------------------------------------- settings
+function openSettings(){
+  $("#cfgToken").value = cfg.token || "";
+  $("#cfgOwner").value = cfg.owner || "";
+  $("#cfgRepo").value = cfg.repo || "";
+  $("#cfgBranch").value = cfg.branch || "master";
+  $("#settings").classList.add("open");
+}
+$("#gearBtn").addEventListener("click", openSettings);
+$("#cfgCancel").addEventListener("click", ()=> $("#settings").classList.remove("open"));
+$("#cfgSave").addEventListener("click", async ()=>{
+  cfg = {
+    token: $("#cfgToken").value.trim(),
+    owner: $("#cfgOwner").value.trim(),
+    repo: $("#cfgRepo").value.trim(),
+    branch: $("#cfgBranch").value.trim() || "master",
+  };
+  saveCfg();
+  $("#settings").classList.remove("open");
+  await refreshFiles();
+});
+
+$("#pushBtn").addEventListener("click", pushFile);
+$("#compileBtn").addEventListener("click", compile);
+
+// ---------------------------------------------------------------- boot
+loadCfg();
+if(configured()){ $("#repoPill").textContent = cfg.owner + "/" + cfg.repo; refreshFiles(); }
+else { openSettings(); }
+
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+</script>
+</body>
+</html>
