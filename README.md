@@ -35,6 +35,7 @@ app-store review, works on iPhone and Android identically.
 |---|---|
 | **Files** tab | lists every `.tex`/`.bib`/`.sty`/`.cls` file in the repo; tap one to open it |
 | **Editor** tab | plain-text editor; a yellow dot on the Files list marks unpushed edits |
+| select text, tap a dot (white/clear, yellow/revision, red/to-do, green/done) | colour-codes that span |
 | **Push** | commits your edit straight to the repo (conflict-checked via the file's `sha`) |
 | **Compile** | pushes first if needed, triggers the GitHub Actions workflow, polls it, then shows the resulting PDF |
 | **PDF** tab | the last successfully compiled PDF |
@@ -42,6 +43,23 @@ app-store review, works on iPhone and Android identically.
 Needs a data connection for Push/Compile (they talk to GitHub); the app
 shell itself (this UI) loads instantly even offline once installed, via a
 small service worker.
+
+### Highlights sync with the desktop editor
+
+Colour-coded highlights are stored in `.texpad-marks.json` at the repo root
+-- the exact same file [texpad.py](https://github.com/JanAulichTum/texpad-latex)'s
+desktop editor reads and writes, not this browser's local storage. That's
+what makes them show up on the other device:
+
+- **Phone -> Mac**: tapping a colour here commits `.texpad-marks.json`
+  immediately. On the Mac, hit **Pull** in texpad to fetch it.
+- **Mac -> phone**: highlighting in texpad and hitting **Push** there
+  commits the same file. On the phone, just open (or re-open) that file --
+  it always re-fetches `.texpad-marks.json` fresh.
+
+Typing near a highlighted span reflows its position locally as you type,
+but that position update only gets pushed the next time you tap a colour
+or hit **Push** -- not on every keystroke, so editing doesn't spam commits.
 
 ## Why cloud compile, not on-device
 

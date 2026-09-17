@@ -1,7 +1,7 @@
 // Caches only the app shell (this file set), so the editor UI opens instantly
 // with no signal. Every GitHub API call still goes straight to the network --
 // there is nothing meaningful to do with stale file/PDF data anyway.
-const CACHE = "texpad-mobile-v2";
+const CACHE = "texpad-mobile-v3";
 const SHELL = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {

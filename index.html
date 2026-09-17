@@ -199,23 +199,6 @@ function loadCfg(){
 function saveCfg(){ localStorage.setItem("texpadMobileConfig", JSON.stringify(cfg)); }
 function configured(){ return !!(cfg.token && cfg.owner && cfg.repo && cfg.branch); }
 
-// ---------------------------------------------------------------- highlight marks
-// {start,end,color} character ranges per file, same idea as the desktop editor's
-// .texpad-marks.json -- except here there's no shared filesystem between your
-// Mac and your phone, so this lives in this browser's localStorage instead. A
-// personal, per-device progress aid; never touches the file content itself.
-function repoKey(){ return cfg.owner + "/" + cfg.repo; }
-function allMarks(){
-  try{ return JSON.parse(localStorage.getItem("texpadMobileMarks") || "{}"); }catch(e){ return {}; }
-}
-function marksFor(path){ return (allMarks()[repoKey()] || {})[path] || []; }
-function saveMarksFor(path, marks){
-  const all = allMarks();
-  all[repoKey()] = all[repoKey()] || {};
-  if(marks.length) all[repoKey()][path] = marks; else delete all[repoKey()][path];
-  localStorage.setItem("texpadMobileMarks", JSON.stringify(all));
-}
-
 function setStatus(text, cls){
   const s = $("#status"); s.textContent = text || ""; s.className = cls || "";
 }
@@ -240,6 +223,55 @@ async function ghJson(path, opts){
     throw new Error(msg);
   }
   return res.json();
+}
+
+// ---------------------------------------------------------------- highlight marks
+// {start,end,color} character ranges per file, stored in .texpad-marks.json
+// AT THE REPO ROOT -- the exact same file the desktop editor (texpad.py)
+// reads/writes. That's what makes highlights cross devices: a highlight
+// made here shows up on the Mac after its "Pull" button, and a highlight
+// made on the Mac shows up here as soon as you open that file again
+// (openFile() below always re-fetches this file fresh). Never touches the
+// .tex file's own content.
+let marksFileSha = null, allMarksCache = {};
+
+async function loadAllMarks(){
+  try{
+    const res = await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/.texpad-marks.json?ref=${encodeURIComponent(cfg.branch)}`);
+    if(res.status === 404){ allMarksCache = {}; marksFileSha = null; return; }
+    if(!res.ok) throw new Error(res.status + " " + res.statusText);
+    const data = await res.json();
+    marksFileSha = data.sha;
+    allMarksCache = JSON.parse(b64ToUtf8(data.content) || "{}");
+  }catch(err){
+    allMarksCache = {}; marksFileSha = null;   // don't block opening the file over this
+  }
+}
+
+async function persistMarksFor(path, marks, retried){
+  const merged = Object.assign({}, allMarksCache);
+  if(marks.length) merged[path] = marks; else delete merged[path];
+  const body = {
+    message: "Update highlight marks (texpad mobile)",
+    content: utf8ToB64(JSON.stringify(merged)),
+    branch: cfg.branch,
+  };
+  if(marksFileSha) body.sha = marksFileSha;
+  const res = await gh("/repos/" + cfg.owner + "/" + cfg.repo + "/contents/.texpad-marks.json",
+                        {method:"PUT", body: JSON.stringify(body)});
+  if(res.status === 409 && !retried){
+    // the Mac (or another session) changed the marks file since we last
+    // fetched it -- pull its latest version, keep our change on top, retry once
+    await loadAllMarks();
+    return persistMarksFor(path, marks, true);
+  }
+  if(!res.ok){
+    const j = await res.json().catch(()=>({}));
+    throw new Error(j.message || (res.status + " " + res.statusText));
+  }
+  const j = await res.json();
+  marksFileSha = j.content.sha;
+  allMarksCache = merged;
 }
 
 // ---------------------------------------------------------------- files list
@@ -289,14 +321,17 @@ let curMarks = [], prevText = "";   // highlight ranges for the open file
 async function openFile(path){
   setStatus("Opening " + path + "…", "work");
   try{
-    const data = await ghJson(`/repos/${cfg.owner}/${cfg.repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.branch)}`);
+    const [data] = await Promise.all([
+      ghJson(`/repos/${cfg.owner}/${cfg.repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.branch)}`),
+      loadAllMarks(),   // fresh fetch every open -- picks up Mac-made highlights
+    ]);
     curPath = path; curSha = data.sha; dirty = false;
     $("#ed").value = b64ToUtf8(data.content);
     $("#fname").textContent = path;
     $("#pushBtn").disabled = false;
     $("#compileBtn").disabled = false;
     delete markColor[path]; renderFiles();
-    curMarks = marksFor(path); prevText = $("#ed").value; renderHL();
+    curMarks = allMarksCache[path] || []; prevText = $("#ed").value; renderHL();
     switchView("editor");
     setStatus("");
   }catch(err){
@@ -344,8 +379,13 @@ function setHighlight(color){
   if(color) next.push({start:s, end:e, color});
   curMarks = next.sort((a,b)=>a.start-b.start);
   renderHL();
-  if(curPath) saveMarksFor(curPath, curMarks);
   t.focus(); t.setSelectionRange(s, e);
+  if(curPath){
+    persistMarksFor(curPath, curMarks).then(
+      ()=> setStatus("Highlight saved ✓", "ok"),
+      err=> setStatus("Couldn't save highlight: " + err.message, "bad")
+    );
+  }
 }
 document.querySelectorAll("#hlbar .sw").forEach(b=>{
   // preventDefault on both events -- mobile browsers fire touchstart, desktop
@@ -363,11 +403,14 @@ document.addEventListener("keydown", e=>{   // external keyboard shortcut
 });
 
 $("#ed").addEventListener("input", ()=>{
+  // Reflow marks in memory on every keystroke (cheap, local) but don't push
+  // to GitHub here -- that would be a commit per keystroke. Position drift
+  // from typing gets synced next time you tap a colour or hit Push instead.
   const t = $("#ed"), newText = t.value;
   adjustMarks(prevText, newText);
   prevText = newText;
   dirty = true;
-  if(curPath){ markColor[curPath] = "#ffd600"; saveMarksFor(curPath, curMarks); }
+  if(curPath){ markColor[curPath] = "#ffd600"; }
   renderHL();
 });
 
@@ -394,7 +437,12 @@ async function pushFile(){
     const j = await res.json();
     curSha = j.content.sha; dirty = false;
     delete markColor[curPath]; renderFiles();
-    setStatus("Pushed " + curPath + " ✓", "ok");
+    try{
+      await persistMarksFor(curPath, curMarks);   // catch up any position drift from typing
+      setStatus("Pushed " + curPath + " ✓", "ok");
+    }catch(markErr){
+      setStatus("Pushed " + curPath + " ✓ (highlight sync failed: " + markErr.message + ")", "bad");
+    }
   }catch(err){
     setStatus("Push failed: " + err.message, "bad");
   }finally{
