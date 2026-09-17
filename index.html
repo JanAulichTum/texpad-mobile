@@ -414,6 +414,15 @@ $("#ed").addEventListener("input", ()=>{
   renderHL();
 });
 
+// The highlight layer sits in its own absolutely-positioned box behind the
+// textarea (see #hl/#ed in the CSS) so it can never scroll on its own --
+// without this, it stays put at scrollTop 0 while the real text scrolls
+// past it, which is exactly the "colours stay fixed in place" bug.
+$("#ed").addEventListener("scroll", ()=>{
+  $("#hl").scrollTop = $("#ed").scrollTop;
+  $("#hl").scrollLeft = $("#ed").scrollLeft;
+});
+
 async function pushFile(){
   if(!curPath) return;
   setStatus("Pushing " + curPath + "…", "work");
