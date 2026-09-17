@@ -66,8 +66,12 @@
   /* pre-wrap + overflow-wrap: the editor wraps to whatever width the device
      actually is, purely as CSS rendering -- the file's own line breaks are
      never touched, so this looks identical on desktop's un-wrapped view. */
+  /* 16px is the line iOS Safari uses to decide whether to auto-zoom a text
+     field on focus (anything smaller triggers it) -- below that, tapping in
+     to type zooms the whole page in, which is the "have to scroll" annoyance.
+     16px keeps that from happening at all, on every platform. */
   #hl,#ed{position:absolute;inset:0;margin:0;border:0;padding:12px 14px;max-width:100%;
-          font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+          font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
           tab-size:2;-webkit-text-size-adjust:100%;overflow:auto;
           white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word}
   #hl{color:transparent;pointer-events:none;overflow:hidden}
@@ -93,7 +97,7 @@
   #settingsCard p.hint{color:var(--muted);font-size:12.5px;margin:2px 0 14px}
   label.field{display:block;margin-bottom:12px}
   label.field span{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
-  label.field input{width:100%;font:15px/1.3 -apple-system,sans-serif;padding:10px 11px;
+  label.field input{width:100%;font:16px/1.3 -apple-system,sans-serif;padding:10px 11px;
                      border-radius:9px;border:1px solid var(--line);background:var(--panel);
                      color:var(--ink)}
   .row{display:flex;gap:8px}
