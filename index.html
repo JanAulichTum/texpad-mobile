@@ -561,6 +561,16 @@ else { openSettings(); }
 
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
+  // sw.js calls skipWaiting()+clients.claim() so a new deploy takes over
+  // immediately -- but "immediately" still means the *next* request, not
+  // retroactively re-rendering the page you already have open. Without
+  // this, every update needs a manual force-quit-and-reopen to actually
+  // show up, which is exactly what happened after the last two pushes.
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if(reloaded) return; reloaded = true;
+    location.reload();
+  });
 }
 </script>
 </body>
