@@ -56,9 +56,22 @@
          overflow-x:auto;white-space:nowrap;flex:0 0 auto}
   #edbar .fname{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
                 color:var(--muted);flex:1 1 auto;overflow:hidden;text-overflow:ellipsis}
-  #ed{flex:1 1 auto;border:0;outline:0;resize:none;padding:12px 14px;background:var(--bg);
-      color:var(--ink);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
-      tab-size:2;-webkit-text-size-adjust:100%}
+  #hlbar{display:flex;gap:7px;align-items:center;flex:0 0 auto}
+  .sw{width:24px;height:24px;padding:0;border-radius:50%;flex:0 0 auto}
+  /* #hl sits behind the textarea and paints the highlight colour; #ed floats on
+     top with a transparent background so its real, editable text shows through
+     the colour. Both need identical font metrics/padding or the two won't line
+     up -- same trick as the desktop editor. */
+  #edstack{position:relative;flex:1 1 auto;min-height:0;background:var(--bg)}
+  #hl,#ed{position:absolute;inset:0;margin:0;border:0;padding:12px 14px;
+          font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+          tab-size:2;-webkit-text-size-adjust:100%;overflow:auto;white-space:pre-wrap;word-break:break-word}
+  #hl{color:transparent;pointer-events:none;overflow:hidden}
+  #hl mark{color:transparent;background:none;border-radius:2px;padding:0}
+  #hl mark.hy{background:rgba(255,196,0,.45)}
+  #hl mark.hr{background:rgba(255,70,70,.42)}
+  #hl mark.hg{background:rgba(46,196,110,.4)}
+  #ed{outline:0;resize:none;background:transparent;color:var(--ink)}
 
   /* ---- pdf view ---- */
   #pdfwrap{flex:1 1 auto;display:flex;align-items:center;justify-content:center;
@@ -111,11 +124,17 @@
 
   <div class="view" id="view-editor">
     <div id="edbar">
+      <span id="hlbar" title="Highlight the selected text">
+        <button class="sw" data-c=""  style="background:#fff;border:1px solid var(--line)" title="Clear highlight"></button>
+        <button class="sw" data-c="y" style="background:#ffd600" title="Needs revision"></button>
+        <button class="sw" data-c="r" style="background:#ff5a5a" title="To-do"></button>
+        <button class="sw" data-c="g" style="background:#2ecc71" title="Done"></button>
+      </span>
       <span class="fname" id="fname">no file open</span>
       <button id="pushBtn" disabled>Push</button>
       <button class="primary" id="compileBtn" disabled>Compile</button>
     </div>
-    <textarea id="ed" spellcheck="false" placeholder="Open a file from the Files tab…"></textarea>
+    <div id="edstack"><div id="hl"></div><textarea id="ed" spellcheck="false" placeholder="Open a file from the Files tab…"></textarea></div>
   </div>
 
   <div class="view" id="view-pdf">
@@ -180,9 +199,27 @@ function loadCfg(){
 function saveCfg(){ localStorage.setItem("texpadMobileConfig", JSON.stringify(cfg)); }
 function configured(){ return !!(cfg.token && cfg.owner && cfg.repo && cfg.branch); }
 
+// ---------------------------------------------------------------- highlight marks
+// {start,end,color} character ranges per file, same idea as the desktop editor's
+// .texpad-marks.json -- except here there's no shared filesystem between your
+// Mac and your phone, so this lives in this browser's localStorage instead. A
+// personal, per-device progress aid; never touches the file content itself.
+function repoKey(){ return cfg.owner + "/" + cfg.repo; }
+function allMarks(){
+  try{ return JSON.parse(localStorage.getItem("texpadMobileMarks") || "{}"); }catch(e){ return {}; }
+}
+function marksFor(path){ return (allMarks()[repoKey()] || {})[path] || []; }
+function saveMarksFor(path, marks){
+  const all = allMarks();
+  all[repoKey()] = all[repoKey()] || {};
+  if(marks.length) all[repoKey()][path] = marks; else delete all[repoKey()][path];
+  localStorage.setItem("texpadMobileMarks", JSON.stringify(all));
+}
+
 function setStatus(text, cls){
   const s = $("#status"); s.textContent = text || ""; s.className = cls || "";
 }
+const esc = s => s.replace(/[<>&]/g, c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
 
 // ---------------------------------------------------------------- GitHub API
 async function gh(path, opts){
@@ -247,6 +284,7 @@ let markColor = {};
 
 // ---------------------------------------------------------------- editor
 let curPath = null, curSha = null, dirty = false;
+let curMarks = [], prevText = "";   // highlight ranges for the open file
 
 async function openFile(path){
   setStatus("Opening " + path + "…", "work");
@@ -258,6 +296,7 @@ async function openFile(path){
     $("#pushBtn").disabled = false;
     $("#compileBtn").disabled = false;
     delete markColor[path]; renderFiles();
+    curMarks = marksFor(path); prevText = $("#ed").value; renderHL();
     switchView("editor");
     setStatus("");
   }catch(err){
@@ -265,9 +304,71 @@ async function openFile(path){
   }
 }
 
+// ---- highlight rendering + edit-tracking (see texpad.py's desktop editor for
+// the same algorithm, explained in full there) ----------------------------
+function renderHL(){
+  const text = $("#ed").value;
+  const marks = curMarks.slice().sort((a,b)=>a.start-b.start);
+  let html = "", pos = 0;
+  for(const m of marks){
+    if(m.start < pos) continue;
+    if(m.start > pos) html += esc(text.slice(pos, m.start));
+    html += "<mark class='h"+m.color+"'>" + esc(text.slice(m.start, m.end)) + "</mark>";
+    pos = m.end;
+  }
+  html += esc(text.slice(pos));
+  $("#hl").innerHTML = html + "\n";
+}
+
+function adjustMarks(oldT, newT){
+  if(!curMarks.length || oldT === newT) return;
+  const maxCommon = Math.min(oldT.length, newT.length);
+  let pre = 0; while(pre < maxCommon && oldT[pre] === newT[pre]) pre++;
+  let suf = 0; const limit = maxCommon - pre;
+  while(suf < limit && oldT[oldT.length-1-suf] === newT[newT.length-1-suf]) suf++;
+  const oldMidEnd = oldT.length - suf, newMidEnd = newT.length - suf, delta = newT.length - oldT.length;
+  const map = (p, isStart) => p<=pre ? p : p>=oldMidEnd ? p+delta : (isStart ? newMidEnd : pre);
+  curMarks = curMarks.map(m => ({start: map(m.start,true), end: map(m.end,false), color: m.color}))
+                     .filter(m => m.end > m.start);
+}
+
+function setHighlight(color){
+  const t = $("#ed"), s = t.selectionStart, e = t.selectionEnd;
+  if(s === e) return;
+  const next = [];
+  for(const m of curMarks){
+    if(m.end <= s || m.start >= e){ next.push(m); continue; }
+    if(m.start < s) next.push({start:m.start, end:s, color:m.color});
+    if(m.end > e)   next.push({start:e, end:m.end, color:m.color});
+  }
+  if(color) next.push({start:s, end:e, color});
+  curMarks = next.sort((a,b)=>a.start-b.start);
+  renderHL();
+  if(curPath) saveMarksFor(curPath, curMarks);
+  t.focus(); t.setSelectionRange(s, e);
+}
+document.querySelectorAll("#hlbar .sw").forEach(b=>{
+  // preventDefault on both events -- mobile browsers fire touchstart, desktop
+  // fires mousedown; either one left unblocked would drop the text selection
+  // before the click handler below gets a chance to read it.
+  b.addEventListener("mousedown", ev=>ev.preventDefault());
+  b.addEventListener("touchstart", ev=>ev.preventDefault());
+  b.addEventListener("click", ()=>setHighlight(b.dataset.c));
+});
+document.addEventListener("keydown", e=>{   // external keyboard shortcut
+  if(e.altKey && !e.metaKey && !e.ctrlKey && document.activeElement === $("#ed")){
+    const map = {"1":"", "2":"y", "3":"r", "4":"g"};
+    if(map[e.key] !== undefined){ e.preventDefault(); setHighlight(map[e.key]); }
+  }
+});
+
 $("#ed").addEventListener("input", ()=>{
+  const t = $("#ed"), newText = t.value;
+  adjustMarks(prevText, newText);
+  prevText = newText;
   dirty = true;
-  if(curPath){ markColor[curPath] = "#ffd600"; }
+  if(curPath){ markColor[curPath] = "#ffd600"; saveMarksFor(curPath, curMarks); }
+  renderHL();
 });
 
 async function pushFile(){
