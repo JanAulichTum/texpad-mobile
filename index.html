@@ -146,7 +146,8 @@
       </span>
       <span class="fname" id="fname">no file open</span>
       <button id="pushBtn" disabled>Push</button>
-      <button class="primary" id="compileBtn" disabled>Compile</button>
+      <button id="compileSectionBtn" disabled title="Compile just this section -- faster, skips the title page and every other section">Section</button>
+      <button class="primary" id="compileBtn" disabled title="Compile the full thesis">Compile</button>
     </div>
     <div id="edstack"><div id="hl"></div><textarea id="ed" spellcheck="false" placeholder="Open a file from the Files tab…"></textarea></div>
   </div>
@@ -199,12 +200,13 @@ function utf8ToB64(str){
   for(let i=0; i<bytes.length; i+=chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i+chunk));
   return btoa(binary);
 }
-function b64ToUtf8(b64){
+function b64ToBytes(b64){
   const binary = atob(b64.replace(/\n/g, ""));
   const bytes = new Uint8Array(binary.length);
   for(let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
+  return bytes;
 }
+function b64ToUtf8(b64){ return new TextDecoder().decode(b64ToBytes(b64)); }
 
 // ---------------------------------------------------------------- config
 let cfg = {};
@@ -345,6 +347,7 @@ async function openFile(path){
     $("#fname").textContent = path;
     $("#pushBtn").disabled = false;
     $("#compileBtn").disabled = false;
+    $("#compileSectionBtn").disabled = !path.startsWith("sections/");
     delete markColor[path]; renderFiles();
     curMarks = allMarksCache[path] || []; prevText = $("#ed").value; renderHL();
     switchView("editor");
@@ -491,17 +494,26 @@ async function pushFile(){
 }
 
 // ---------------------------------------------------------------- compile
-async function compile(){
+// mode "full" compiles main.tex (the whole thesis); "section" compiles just
+// the currently open file, wrapped in the same preamble/metadata, skipping
+// the title page and every other section -- much faster for checking how
+// one section formats without waiting on the full document each time.
+async function compile(mode){
   if(dirty){
     setStatus("Pushing your edit first…", "work");
     await pushFile();
   }
-  $("#compileBtn").disabled = true;
+  const isSection = mode === "section";
+  const pdfName = isSection ? "preview" : "main";
+  $("#compileBtn").disabled = true; $("#compileSectionBtn").disabled = true;
   const dispatchedAt = Date.now() - 5000;   // small buffer for clock skew
   try{
-    setStatus("Starting compile…", "work");
+    setStatus(isSection ? "Starting section compile…" : "Starting full compile…", "work");
     const res = await gh(`/repos/${cfg.owner}/${cfg.repo}/actions/workflows/compile.yml/dispatches`,
-                          {method:"POST", body: JSON.stringify({ref: cfg.branch})});
+                          {method:"POST", body: JSON.stringify({
+                            ref: cfg.branch,
+                            inputs: {target_file: isSection ? curPath : ""},
+                          })});
     if(!res.ok) throw new Error("Couldn't start the workflow (" + res.status + "). Does compile.yml exist on this branch?");
 
     // find the run this dispatch created
@@ -513,7 +525,7 @@ async function compile(){
     }
     if(!run) throw new Error("Compile started, but I couldn't find the run — check the Actions tab on GitHub.");
 
-    setStatus("Compiling on GitHub… (usually ~1-2 min)", "work");
+    setStatus((isSection ? "Compiling section" : "Compiling") + " on GitHub… (usually ~1-2 min)", "work");
     while(true){
       await sleep(3000);
       run = await ghJson(`/repos/${cfg.owner}/${cfg.repo}/actions/runs/${run.id}`);
@@ -527,35 +539,40 @@ async function compile(){
     }
 
     setStatus("Fetching PDF…", "work");
-    await showLatestPdf();
+    await showLatestPdf(pdfName);
     setStatus("Compiled ✓", "ok");
     switchView("pdf");
   }catch(err){
     setStatus("Compile error: " + err.message, "bad");
   }finally{
     $("#compileBtn").disabled = false;
+    $("#compileSectionBtn").disabled = !(curPath && curPath.startsWith("sections/"));
   }
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 
-async function showLatestPdf(){
-  const rel = await ghJson(`/repos/${cfg.owner}/${cfg.repo}/releases/tags/latest`);
-  const asset = (rel.assets || []).find(a => a.name.endsWith(".pdf"));
-  if(!asset) throw new Error("No PDF asset on the 'latest' release yet.");
-  const res = await gh(`/repos/${cfg.owner}/${cfg.repo}/releases/assets/${asset.id}`,
-                        {headers: {"Accept": "application/octet-stream"}});
-  if(!res.ok) throw new Error("Couldn't download the PDF (" + res.status + ")");
-  const blob = await res.blob();
+async function showLatestPdf(name){
+  name = name || "main";
+  // Delivered via the repo Contents API (the workflow commits the compiled
+  // PDF to .texpad-build/), NOT a GitHub Release -- release-asset downloads
+  // redirect to a host that sends no CORS headers at all, which every
+  // browser is required to reject; that's what "Load failed" actually was.
+  const path = `.texpad-build/${name}.pdf`;
+  const res = await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(cfg.branch)}`);
+  if(res.status === 404) throw new Error("No compiled " + name + ".pdf yet -- run a compile first.");
+  if(!res.ok) throw new Error(res.status + " " + res.statusText);
+  const data = await res.json();
+  const blob = new Blob([b64ToBytes(data.content)], {type: "application/pdf"});
   const url = URL.createObjectURL(blob);
   $("#pdfHint").style.display = "none";
-  // The reliable path first: some mobile browsers (notably iOS Safari) can't
+  // The reliable path: some mobile browsers (notably iOS Safari) can't
   // render a PDF blob inside an <iframe> at all and just show their own bare
-  // "Load failed" page in its place, even though the PDF itself is fine --
-  // that's what you hit. A direct link opens it with the browser's real,
-  // native PDF viewer instead, which every platform handles correctly.
+  // "Load failed" page in its place, even when the PDF itself is fine. A
+  // direct link opens it with the browser's real, native PDF viewer instead.
   $("#pdfOpenLink").href = url;
+  $("#pdfOpenLink").textContent = name === "preview" ? "Open PDF ↗ (section preview)" : "Open PDF ↗ (full thesis)";
   $("#pdfOpenBar").style.display = "block";
-  // Still attempt the inline preview underneath -- it's a nicer experience
+  // Still attempt the inline preview underneath -- a nicer experience
   // wherever it happens to work (desktop, most of Android), and costs
   // nothing when it doesn't since the link above always works regardless.
   const frame = $("#pdfframe");
@@ -593,7 +610,8 @@ $("#cfgSave").addEventListener("click", async ()=>{
 });
 
 $("#pushBtn").addEventListener("click", pushFile);
-$("#compileBtn").addEventListener("click", compile);
+$("#compileBtn").addEventListener("click", ()=>compile("full"));
+$("#compileSectionBtn").addEventListener("click", ()=>compile("section"));
 
 // ---------------------------------------------------------------- boot
 loadCfg();
