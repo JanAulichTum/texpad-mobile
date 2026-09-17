@@ -55,7 +55,7 @@
   #edbar{display:flex;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);
          overflow-x:auto;white-space:nowrap;flex:0 0 auto}
   #edbar .fname{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
-                color:var(--muted);flex:1 1 auto;overflow:hidden;text-overflow:ellipsis}
+                color:var(--muted);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
   #hlbar{display:flex;gap:7px;align-items:center;flex:0 0 auto}
   .sw{width:24px;height:24px;padding:0;border-radius:50%;flex:0 0 auto}
   /* #hl sits behind the textarea and paints the highlight colour; #ed floats on
@@ -63,9 +63,13 @@
      the colour. Both need identical font metrics/padding or the two won't line
      up -- same trick as the desktop editor. */
   #edstack{position:relative;flex:1 1 auto;min-height:0;background:var(--bg)}
-  #hl,#ed{position:absolute;inset:0;margin:0;border:0;padding:12px 14px;
+  /* pre-wrap + overflow-wrap: the editor wraps to whatever width the device
+     actually is, purely as CSS rendering -- the file's own line breaks are
+     never touched, so this looks identical on desktop's un-wrapped view. */
+  #hl,#ed{position:absolute;inset:0;margin:0;border:0;padding:12px 14px;max-width:100%;
           font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
-          tab-size:2;-webkit-text-size-adjust:100%;overflow:auto;white-space:pre-wrap;word-break:break-word}
+          tab-size:2;-webkit-text-size-adjust:100%;overflow:auto;
+          white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word}
   #hl{color:transparent;pointer-events:none;overflow:hidden}
   #hl mark{color:transparent;background:none;border-radius:2px;padding:0}
   #hl mark.hy{background:rgba(255,196,0,.45)}
@@ -367,8 +371,9 @@ function adjustMarks(oldT, newT){
                      .filter(m => m.end > m.start);
 }
 
-function setHighlight(color){
-  const t = $("#ed"), s = t.selectionStart, e = t.selectionEnd;
+function setHighlight(color, sel){
+  const t = $("#ed");
+  const s = sel ? sel.start : t.selectionStart, e = sel ? sel.end : t.selectionEnd;
   if(s === e) return;
   const next = [];
   for(const m of curMarks){
@@ -379,7 +384,7 @@ function setHighlight(color){
   if(color) next.push({start:s, end:e, color});
   curMarks = next.sort((a,b)=>a.start-b.start);
   renderHL();
-  t.focus(); t.setSelectionRange(s, e);
+  t.focus(); if(document.activeElement === t) t.setSelectionRange(s, e);
   if(curPath){
     persistMarksFor(curPath, curMarks).then(
       ()=> setStatus("Highlight saved ✓", "ok"),
@@ -387,13 +392,28 @@ function setHighlight(color){
     );
   }
 }
+// Real phones don't behave like the desktop-style mousedown/click pattern
+// this used to rely on: calling preventDefault() in a touchstart handler can
+// suppress the browser's synthetic click afterwards entirely on some mobile
+// browsers, which is exactly "tapping a colour does nothing". So instead:
+// capture the selection the instant a swatch is touched (before anything can
+// blur it away), and act on touchend directly rather than waiting for click.
+// A guard prevents acting twice if a browser fires both.
 document.querySelectorAll("#hlbar .sw").forEach(b=>{
-  // preventDefault on both events -- mobile browsers fire touchstart, desktop
-  // fires mousedown; either one left unblocked would drop the text selection
-  // before the click handler below gets a chance to read it.
-  b.addEventListener("mousedown", ev=>ev.preventDefault());
-  b.addEventListener("touchstart", ev=>ev.preventDefault());
-  b.addEventListener("click", ()=>setHighlight(b.dataset.c));
+  let pendingSel = null, handled = false;
+  const capture = () => {
+    const t = $("#ed");
+    if(t.selectionStart !== t.selectionEnd) pendingSel = {start:t.selectionStart, end:t.selectionEnd};
+  };
+  const activate = () => {
+    if(handled) return; handled = true;
+    setTimeout(()=>{ handled = false; }, 400);
+    setHighlight(b.dataset.c, pendingSel);
+  };
+  b.addEventListener("mousedown", ev=>{ ev.preventDefault(); capture(); });
+  b.addEventListener("touchstart", capture, {passive:true});
+  b.addEventListener("touchend", ev=>{ ev.preventDefault(); activate(); });
+  b.addEventListener("click", activate);
 });
 document.addEventListener("keydown", e=>{   // external keyboard shortcut
   if(e.altKey && !e.metaKey && !e.ctrlKey && document.activeElement === $("#ed")){
